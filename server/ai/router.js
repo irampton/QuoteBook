@@ -37,7 +37,10 @@ function createAiRouter({ service, logger = console } = {}) {
   router.post('/parse', async (req, res) => {
     try {
       const input = parseRequestSchema.parse(req.body);
-      const quote = await service.parseQuote(input.text, { searchOnline: input.searchOnline });
+      const quote = await service.parseQuote(input.text, {
+        searchOnline: input.searchOnline,
+        availableCategories: input.availableCategories,
+      });
       res.json({ quote });
     } catch (error) {
       if (!(error instanceof AiError) && !(error instanceof ZodError)) logger?.error?.('AI parse request failed.', error);

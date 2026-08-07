@@ -9,9 +9,11 @@ let server;
 let baseUrl;
 let token;
 let categoryId;
+let lastParseOptions;
 
 const aiService = {
-  async parseQuote(text, { searchOnline }) {
+  async parseQuote(text, { searchOnline, availableCategories = [] }) {
+    lastParseOptions = { searchOnline, availableCategories };
     return {
       text: text.replace(/^[“"]|[”"]$/g, ""),
       author: "Test Author",
@@ -138,6 +140,15 @@ test("protects AI routes and returns the frontend contract for authenticated use
   assert.equal(parsed.body.quote.text, "Private quote");
   assert.deepEqual(parsed.body.quote.categories, ["Parsed"]);
 
+  const categorizedParse = await api("/api/ai/parse", {
+    method: "POST",
+    auth: token,
+    body: { text: "Categorize this quote", searchOnline: true, availableCategories: ["Funny", "Deep"] },
+  });
+  assert.equal(categorizedParse.status, 200);
+  assert.ok(categorizedParse.body.quote);
+  assert.deepEqual(lastParseOptions, { searchOnline: true, availableCategories: ["Funny", "Deep"] });
+
   const split = await api("/api/ai/split", {
     method: "POST", auth: token, body: { text: "First\nSecond" },
   });
@@ -167,6 +178,40 @@ test("returns a generic conflict for duplicate categories", async () => {
   });
   assert.equal(response.status, 409);
   assert.deepEqual(response.body, { error: { code: "conflict", message: "That value already exists." } });
+});
+
+test("All Quotes includes categorized and uncategorized quotes while category filters exclude uncategorized quotes", async () => {
+  const categorized = await api("/api/quotes", {
+    method: "POST",
+    auth: token,
+    body: { text: "A categorized regression quote", categoryIds: [categoryId] },
+  });
+  const uncategorized = await api("/api/quotes", {
+    method: "POST",
+    auth: token,
+    body: { text: "An uncategorized regression quote", categoryIds: [] },
+  });
+  assert.equal(categorized.status, 201);
+  assert.equal(uncategorized.status, 201);
+
+  const allQuotes = await api("/api/quotes", { auth: token });
+  const allIds = new Set(allQuotes.body.quotes.map((quote) => quote.id));
+  assert.equal(allQuotes.status, 200);
+  assert.equal(allIds.has(categorized.body.quote.id), true);
+  assert.equal(allIds.has(uncategorized.body.quote.id), true);
+  assert.deepEqual(
+    allQuotes.body.quotes.find((quote) => quote.id === uncategorized.body.quote.id).categories,
+    [],
+  );
+
+  const categoryQuotes = await api(`/api/quotes?category=${categoryId}`, { auth: token });
+  const categoryIds = new Set(categoryQuotes.body.quotes.map((quote) => quote.id));
+  assert.equal(categoryQuotes.status, 200);
+  assert.equal(categoryIds.has(categorized.body.quote.id), true);
+  assert.equal(categoryIds.has(uncategorized.body.quote.id), false);
+
+  await api(`/api/quotes/${categorized.body.quote.id}`, { method: "DELETE", auth: token });
+  await api(`/api/quotes/${uncategorized.body.quote.id}`, { method: "DELETE", auth: token });
 });
 
 test("creates, searches, updates, and deletes a quote", async () => {

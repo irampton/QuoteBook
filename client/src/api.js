@@ -42,7 +42,7 @@ export const api = {
     if (search) query.set('search', search)
     return request(`/quotes${query.size ? `?${query}` : ''}`, { signal })
   },
-  analyzeQuote: (text, searchOnline) => request('/ai/parse', { method: 'POST', body: JSON.stringify({ text, searchOnline }) }),
+  analyzeQuote: (text, searchOnline, availableCategories = []) => request('/ai/parse', { method: 'POST', body: JSON.stringify({ text, searchOnline, availableCategories }) }),
   splitQuotes: (text) => request('/ai/split', { method: 'POST', body: JSON.stringify({ text }) }),
   saveQuote: (quote) => request('/quotes', { method: 'POST', body: JSON.stringify(quote) }),
 }

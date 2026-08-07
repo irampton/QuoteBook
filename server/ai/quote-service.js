@@ -26,7 +26,7 @@ class QuoteAiService {
     this.logger = logger;
   }
 
-  async parseQuote(text, { searchOnline = true, signal } = {}) {
+  async parseQuote(text, { searchOnline = true, availableCategories = [], signal } = {}) {
     let searchResults = [];
     let searchWarning = null;
     if (searchOnline && this.searchHarness) {
@@ -43,10 +43,10 @@ class QuoteAiService {
     try {
       const raw = await this.completionClient.completeJson({
         system: PARSE_SYSTEM,
-        user: buildParsePrompt(text, searchResults, searchWarning),
+        user: buildParsePrompt(text, searchResults, searchWarning, availableCategories),
         signal,
       });
-      const quote = normalizeQuote(parseJsonObject(raw));
+      const quote = normalizeQuote(parseJsonObject(raw), availableCategories);
       if (searchWarning && !quote.researchNotes) quote.researchNotes = searchWarning;
       return quote;
     } catch (error) {
@@ -68,12 +68,12 @@ class QuoteAiService {
     }
   }
 
-  async processBatch(text, { searchOnline = true, signal, onProgress } = {}) {
+  async processBatch(text, { searchOnline = true, availableCategories = [], signal, onProgress } = {}) {
     const inputs = await this.splitQuotes(text, { signal });
     const output = [];
     for (let index = 0; index < inputs.length; index += 1) {
       if (signal?.aborted) throw new AiError('REQUEST_ABORTED', 'Quote processing was cancelled.', { status: 499 });
-      const quote = await this.parseQuote(inputs[index], { searchOnline, signal });
+      const quote = await this.parseQuote(inputs[index], { searchOnline, availableCategories, signal });
       output.push(quote);
       await onProgress?.({ index, total: inputs.length, input: inputs[index], quote });
     }

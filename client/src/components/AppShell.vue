@@ -1,6 +1,6 @@
 <template>
   <div class="min-h-screen bg-cream">
-    <AppSidebar :user="user" :categories="categories" :active-category="view === 'library' ? category?.id || category?.name : null" :open="sidebarOpen" @close="closeSidebar" @logout="$emit('logout')" @add="showAdd" @category="showCategory" @search="showSearch" @new-category="openCategoryModal" />
+    <AppSidebar :user="user" :categories="categories" :active-category="view === 'library' ? category?.id || category?.name : null" :all-quotes-active="view === 'library' && !category && !search" :open="sidebarOpen" @close="closeSidebar" @logout="$emit('logout')" @add="showAdd" @category="showCategory" @search="showSearch" @new-category="openCategoryModal" />
     <main :inert="sidebarOpen && isMobile" :aria-hidden="sidebarOpen && isMobile ? 'true' : undefined" class="min-h-screen md:ml-[286px]">
       <div class="sticky top-0 z-20 flex h-16 items-center border-b border-line bg-cream/90 px-5 backdrop-blur md:hidden"><button ref="menuButton" class="rounded-lg p-2" aria-label="Open menu" :aria-expanded="sidebarOpen" @click="sidebarOpen = true"><Menu :size="21"/></button><span class="ml-3 font-serif text-lg font-semibold">Quotebook</span></div>
       <div ref="content" class="px-5 py-8 outline-none sm:px-8 sm:py-10 lg:px-12 xl:px-16" tabindex="-1"><AddQuotePage v-show="view === 'add'" :categories="categories" @quote-saved="onQuoteSaved"/><QuoteLibrary v-if="view === 'library'" :category="category" :search="search" :refresh-key="refreshKey" @add="showAdd"/></div>
@@ -18,7 +18,7 @@ import QuoteLibrary from './QuoteLibrary.vue'
 import LoadingSpinner from './LoadingSpinner.vue'
 import { api } from '../api'
 const props = defineProps({ user: Object, initialCategories: { type: Array, default: () => [] } }); defineEmits(['logout'])
-const categories = ref([...props.initialCategories]), view = ref('add'), category = ref(null), search = ref(''), sidebarOpen = ref(false), isMobile = ref(false), menuButton = ref(null), content = ref(null), refreshKey = ref(0), newCategoryOpen = ref(false), categoryDialog = ref(null), newCategoryName = ref(''), categorySaving = ref(false), categoryError = ref('')
+const categories = ref([...props.initialCategories]), view = ref('library'), category = ref(null), search = ref(''), sidebarOpen = ref(false), isMobile = ref(false), menuButton = ref(null), content = ref(null), refreshKey = ref(0), newCategoryOpen = ref(false), categoryDialog = ref(null), newCategoryName = ref(''), categorySaving = ref(false), categoryError = ref('')
 let categoryTrigger = null
 let mobileQuery
 function syncViewport(event) { isMobile.value = event.matches; if (!event.matches) sidebarOpen.value = false }

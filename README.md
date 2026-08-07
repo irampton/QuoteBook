@@ -1,6 +1,6 @@
 # Quotebook
 
-Quotebook is a private, searchable place to collect quotes and the stories behind them. It supports a guided first-run setup, single-quote research, sequential batch imports, editable AI suggestions, categories, full-library search, and native sharing/copying.
+Quotebook is a private, searchable place to collect quotes and the stories behind them. It supports a guided first-run setup, single-quote research, progressive batch imports, editable AI suggestions, categories, full-library search, and native sharing/copying.
 
 ## Stack
 
@@ -59,9 +59,11 @@ Do not commit `.env`; it is intentionally ignored. `.env.example` documents safe
 
 - **Search online:** the server queries Wikiquote through its official MediaWiki API and performs a general web search concurrently, then asks the completion endpoint for grounded, structured quote details.
 - **Don't search:** only the pasted text is sent to the completion endpoint for parsing.
-- **Batch import:** one completion first separates the pasted input. Each quote is then processed sequentially through the same single-quote pipeline, with progress and per-item failure handling.
+- **Batch import:** one completion first separates the pasted input. Each quote is then processed sequentially through the same single-quote pipeline. Completed quotes immediately expand into editable cards in a scrolling queue, so review and saving can happen while later lookups continue.
 
-AI output is never saved automatically. The quote text, author, date, source, context, and suggested collections are presented for review and editing first. One surrounding pair of quotation marks is stripped before storage.
+AI output is never saved automatically. The quote text, author, date, source, context, and suggested collections are presented for review and editing first. Suggestions are constrained to the user's existing collections when those are available. The parser conservatively corrects obvious capitalization and punctuation, removes one surrounding pair of quotation marks, and preserves the quote's wording.
+
+After login, **All Quotes** is the default view. It includes the complete library, including quotes that have not been assigned to a collection. Selecting a collection filters the library to that collection.
 
 Wikiquote and general web search fail independently. Evidence is sanitized and bounded before it reaches the completion service. If all online sources are unavailable, processing falls back to an editable parsed result and includes a research note rather than losing the quote.
 
