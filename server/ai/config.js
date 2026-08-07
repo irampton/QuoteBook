@@ -27,6 +27,8 @@ function loadAiConfig(env = process.env) {
     wikiquoteLanguage: env.WIKIQUOTE_LANGUAGE || 'en',
     wikiquoteTimeoutMs: boundedInteger(env.WIKIQUOTE_TIMEOUT_MS, 8_000, 1_000, 15_000),
     wikiquoteMaxResults: boundedInteger(env.WIKIQUOTE_MAX_RESULTS, 4, 1, 5),
+    queryRepairEnabled: env.QUERY_REPAIR_ENABLED !== 'false',
+    queryRepairTimeoutMs: boundedInteger(env.QUERY_REPAIR_TIMEOUT_MS, 5_000, 1_000, 10_000),
   };
 }
 

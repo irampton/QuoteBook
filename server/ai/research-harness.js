@@ -29,6 +29,20 @@ function sanitizeEvidence(item) {
   };
 }
 
+function mergeEvidence(groups, maximum = 8) {
+  const unique = new Map();
+  for (const group of groups) {
+    for (const rawItem of group || []) {
+      const item = sanitizeEvidence(rawItem);
+      if (!item.title && !item.snippet) continue;
+      const key = item.url || `${item.provider}\u0000${item.title}\u0000${item.snippet}`;
+      if (!unique.has(key)) unique.set(key, item);
+      if (unique.size >= maximum) return [...unique.values()];
+    }
+  }
+  return [...unique.values()];
+}
+
 class QuoteResearchHarness {
   constructor({ wikiquoteHarness, webSearchHarness, logger = console, maxEvidence = 8 } = {}) {
     this.wikiquoteHarness = wikiquoteHarness;
@@ -58,13 +72,8 @@ class QuoteResearchHarness {
     if (failureCount === providers.length) {
       throw new AiError('SEARCH_UNAVAILABLE', 'Online quote research is temporarily unavailable.', { status: 502 });
     }
-    const unique = new Map();
-    for (const item of evidence) {
-      const key = item.url || `${item.provider}\u0000${item.title}\u0000${item.snippet}`;
-      if (!unique.has(key)) unique.set(key, item);
-    }
-    return [...unique.values()].slice(0, this.maxEvidence);
+    return mergeEvidence([evidence], this.maxEvidence);
   }
 }
 
-module.exports = { QuoteResearchHarness, sanitizeEvidence };
+module.exports = { QuoteResearchHarness, mergeEvidence, sanitizeEvidence };

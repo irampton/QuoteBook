@@ -1,5 +1,6 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import { createApp } from "../src/app.js";
 import { createDatabase } from "../src/db.js";
 import { createRateLimiter } from "../src/rate-limit.js";
@@ -10,9 +11,20 @@ let baseUrl;
 let token;
 let categoryId;
 let lastParseOptions;
+let aiAbortStarted;
+let aiAbortObserved;
 
 const aiService = {
-  async parseQuote(text, { searchOnline, availableCategories = [] }) {
+  async parseQuote(text, { searchOnline, availableCategories = [], signal }) {
+    if (text === "WAIT_FOR_HTTP_ABORT") {
+      aiAbortStarted?.();
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aiAbortObserved?.();
+          reject(new Error("request aborted"));
+        }, { once: true });
+      });
+    }
     lastParseOptions = { searchOnline, availableCategories };
     return {
       text: text.replace(/^[“"]|[”"]$/g, ""),
@@ -32,7 +44,7 @@ const aiService = {
 
 before(async () => {
   db = createDatabase(":memory:");
-  server = createApp(db, { aiService }).listen(0, "127.0.0.1");
+  server = createApp(db, { aiService, shareSecret: Buffer.alloc(32, 7) }).listen(0, "127.0.0.1");
   await new Promise((resolve, reject) => {
     server.once("listening", resolve);
     server.once("error", reject);
@@ -55,7 +67,7 @@ async function api(path, { method = "GET", body, auth } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = response.status === 204 ? null : await response.json();
-  return { status: response.status, body: data };
+  return { status: response.status, body: data, headers: response.headers };
 }
 
 async function rawApi(path, { method = "POST", body, auth, contentType = "application/json" } = {}) {
@@ -106,6 +118,21 @@ test("unknown API routes return JSON 404s instead of the production SPA", async 
   const response = await api("/api/does-not-exist");
   assert.equal(response.status, 404);
   assert.equal(response.body.error.code, "not_found");
+});
+
+test("production SPA fallback serves dotted share paths without swallowing missing assets", async () => {
+  const sharePage = await fetch(`${baseUrl}/q/${"A".repeat(32)}.${"B".repeat(43)}`);
+  assert.equal(sharePage.status, 200);
+  assert.match(sharePage.headers.get("content-type"), /^text\/html/);
+  assert.match(await sharePage.text(), /<div id="app"><\/div>/);
+
+  const unavailableSharePage = await fetch(`${baseUrl}/q/not-a-valid-token`);
+  assert.equal(unavailableSharePage.status, 200);
+  assert.match(unavailableSharePage.headers.get("content-type"), /^text\/html/);
+
+  const missingAsset = await fetch(`${baseUrl}/assets/not-a-real-asset`);
+  assert.equal(missingAsset.status, 404);
+  assert.match(missingAsset.headers.get("content-type"), /^application\/json/);
 });
 
 test("signs up and requires onboarding", async () => {
@@ -160,6 +187,35 @@ test("protects AI routes and returns the frontend contract for authenticated use
   });
   assert.equal(invalid.status, 400);
   assert.equal(invalid.body.error.code, "INVALID_REQUEST");
+});
+
+test("aborts in-flight AI work when the HTTP client disconnects", async () => {
+  let signalStarted;
+  let signalObserved;
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const observed = new Promise((resolve) => { signalObserved = resolve; });
+  aiAbortStarted = signalStarted;
+  aiAbortObserved = signalObserved;
+
+  const body = JSON.stringify({ text: "WAIT_FOR_HTTP_ABORT", searchOnline: true });
+  const clientRequest = httpRequest(`${baseUrl}/api/ai/parse`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(body),
+    },
+  });
+  clientRequest.on("error", () => {});
+  clientRequest.end(body);
+  await started;
+  clientRequest.destroy();
+  await Promise.race([
+    observed,
+    new Promise((_resolve, reject) => setTimeout(() => reject(new Error("AI abort signal was not propagated")), 1_000)),
+  ]);
+  aiAbortStarted = null;
+  aiAbortObserved = null;
 });
 
 test("sets up categories", async () => {
@@ -332,4 +388,217 @@ test("isolates categories and quotes between users", async () => {
   assert.equal(secondList.status, 200);
   assert.deepEqual(secondList.body.quotes, []);
   assert.equal((await api(`/api/quotes/${firstQuote.body.quote.id}`, { auth: firstLogin.body.token })).status, 200);
+});
+
+test("quote edits and deletes preserve isolation, category counts, response shape, and share lifecycle", async () => {
+  const owner = await api("/api/auth/signup", {
+    method: "POST", body: { username: "edit.owner", password: "secure editing password" },
+  });
+  const attacker = await api("/api/auth/signup", {
+    method: "POST", body: { username: "edit.attacker", password: "secure attacker password" },
+  });
+  const ownerSetup = await api("/api/categories/setup", {
+    method: "POST", auth: owner.body.token, body: { categories: ["Before Edit", "After Edit"] },
+  });
+  const attackerSetup = await api("/api/categories/setup", {
+    method: "POST", auth: attacker.body.token, body: { categories: ["Foreign"] },
+  });
+  const beforeId = ownerSetup.body.categories.find((category) => category.name === "Before Edit").id;
+  const afterId = ownerSetup.body.categories.find((category) => category.name === "After Edit").id;
+  const foreignId = attackerSetup.body.categories[0].id;
+
+  const created = await api("/api/quotes", {
+    method: "POST",
+    auth: owner.body.token,
+    body: {
+      text: "\u201cKeep going.\u201d",
+      author: "Original Author",
+      date: "2025",
+      source: "Original Source",
+      context: "Original Context",
+      lookupMode: "search",
+      categoryIds: [beforeId],
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(Object.keys(created.body), ["quote"]);
+  assert.deepEqual(Object.keys(created.body.quote).sort(), [
+    "author", "categories", "categoryIds", "context", "createdAt", "date", "id", "lookupMode", "source", "text", "updatedAt",
+  ]);
+  assert.equal(created.body.quote.text, "Keep going.");
+  assert.deepEqual(created.body.quote.categories, [{ id: beforeId, name: "Before Edit" }]);
+
+  const countsBefore = await api("/api/categories", { auth: owner.body.token });
+  assert.equal(countsBefore.body.categories.find((category) => category.id === beforeId).quoteCount, 1);
+  assert.equal(countsBefore.body.categories.find((category) => category.id === afterId).quoteCount, 0);
+
+  const quoteId = created.body.quote.id;
+  const edited = await api(`/api/quotes/${quoteId}`, {
+    method: "PATCH",
+    auth: owner.body.token,
+    body: { text: "\"Keep going\".", author: "Edited Author", categoryIds: [afterId, afterId] },
+  });
+  assert.equal(edited.status, 200);
+  assert.deepEqual(Object.keys(edited.body), ["quote"]);
+  assert.equal(edited.body.quote.id, quoteId);
+  assert.equal(edited.body.quote.text, "Keep going.");
+  assert.equal(edited.body.quote.author, "Edited Author");
+  assert.deepEqual(edited.body.quote.categories, [{ id: afterId, name: "After Edit" }]);
+  assert.deepEqual(edited.body.quote.categoryIds, [afterId]);
+
+  const countsAfterEdit = await api("/api/categories", { auth: owner.body.token });
+  assert.equal(countsAfterEdit.body.categories.find((category) => category.id === beforeId).quoteCount, 0);
+  assert.equal(countsAfterEdit.body.categories.find((category) => category.id === afterId).quoteCount, 1);
+
+  assert.equal((await api(`/api/quotes/${quoteId}`, {
+    method: "PATCH", auth: owner.body.token, body: { text: "Must not apply", categoryIds: "invalid" },
+  })).status, 400);
+  assert.equal((await api(`/api/quotes/${quoteId}`, {
+    method: "PATCH", auth: owner.body.token, body: { text: "Must not apply either", categoryIds: [foreignId] },
+  })).status, 400);
+  assert.equal((await api(`/api/quotes/${quoteId}`, {
+    method: "PATCH", auth: attacker.body.token, body: { text: "Stolen edit", categoryIds: [foreignId] },
+  })).status, 404);
+  assert.equal((await api(`/api/quotes/${quoteId}`, { method: "DELETE", auth: attacker.body.token })).status, 404);
+  const unchanged = await api(`/api/quotes/${quoteId}`, { auth: owner.body.token });
+  assert.equal(unchanged.body.quote.text, "Keep going.");
+  assert.deepEqual(unchanged.body.quote.categoryIds, [afterId]);
+
+  const share = await api(`/api/quotes/${quoteId}/share`, { method: "POST", auth: owner.body.token });
+  assert.equal(share.status, 201);
+  assert.equal((await api(`/api/shares/${share.body.share.token}`)).status, 200);
+  const deleted = await api(`/api/quotes/${quoteId}`, { method: "DELETE", auth: owner.body.token });
+  assert.equal(deleted.status, 204);
+  assert.equal(deleted.body, null);
+  assert.equal((await api(`/api/quotes/${quoteId}`, { auth: owner.body.token })).status, 404);
+  assert.equal((await api(`/api/shares/${share.body.share.token}`)).status, 404);
+  const countsAfterDelete = await api("/api/categories", { auth: owner.body.token });
+  assert.equal(countsAfterDelete.body.categories.find((category) => category.id === afterId).quoteCount, 0);
+});
+
+test("shares publicly with strict privacy and imports safely across users", async () => {
+  const ownerSignup = await api("/api/auth/signup", {
+    method: "POST", body: { username: "share.owner", password: "secure owner password" },
+  });
+  const readerSignup = await api("/api/auth/signup", {
+    method: "POST", body: { username: "share.reader", password: "secure reader password" },
+  });
+  const ownerToken = ownerSignup.body.token;
+  const readerToken = readerSignup.body.token;
+  const ownerSetup = await api("/api/categories/setup", {
+    method: "POST", auth: ownerToken, body: { categories: ["Owner Original", "Owner Imported"] },
+  });
+  const readerSetup = await api("/api/categories/setup", {
+    method: "POST", auth: readerToken, body: { categories: ["Reader Saved", "Reader Later"] },
+  });
+  const ownerOriginalId = ownerSetup.body.categories.find((category) => category.name === "Owner Original").id;
+  const ownerImportedId = ownerSetup.body.categories.find((category) => category.name === "Owner Imported").id;
+  const readerCategoryId = readerSetup.body.categories.find((category) => category.name === "Reader Saved").id;
+  const readerLaterId = readerSetup.body.categories.find((category) => category.name === "Reader Later").id;
+
+  const source = await api("/api/quotes", {
+    method: "POST",
+    auth: ownerToken,
+    body: {
+      text: "What is shared should remain intentionally small.",
+      author: "Privacy Tester",
+      date: "2026",
+      source: "A private source",
+      context: "Private context that must never cross the share boundary",
+      categoryIds: [ownerOriginalId],
+    },
+  });
+  assert.equal(source.status, 201);
+  assert.equal((await api(`/api/quotes/${source.body.quote.id}/share`, { auth: ownerToken })).status, 404);
+
+  const createdShare = await api(`/api/quotes/${source.body.quote.id}/share`, { method: "POST", auth: ownerToken });
+  assert.equal(createdShare.status, 201);
+  const { token: shareToken, path: sharePath } = createdShare.body.share;
+  assert.match(shareToken, /^[A-Za-z0-9_-]{32}\.[A-Za-z0-9_-]{43}$/);
+  assert.equal(sharePath, `/q/${shareToken}`);
+  const stableShare = await api(`/api/quotes/${source.body.quote.id}/share`, { auth: ownerToken });
+  assert.equal(stableShare.status, 200);
+  assert.deepEqual(stableShare.body.share, createdShare.body.share);
+  const repeatedShare = await api(`/api/quotes/${source.body.quote.id}/share`, { method: "POST", auth: ownerToken });
+  assert.equal(repeatedShare.status, 200);
+  assert.deepEqual(repeatedShare.body.share, createdShare.body.share);
+  assert.equal((await api(`/api/quotes/${source.body.quote.id}/share`, { auth: readerToken })).status, 404);
+
+  const storedShare = db.prepare("SELECT selector, token_hash AS tokenHash FROM quote_shares WHERE quote_id = ?").get(source.body.quote.id);
+  assert.equal(storedShare.selector, shareToken.split(".")[0]);
+  assert.equal(storedShare.tokenHash.length, 64);
+  assert.notEqual(storedShare.tokenHash, shareToken);
+
+  const publicQuote = await api(`/api/shares/${shareToken}`);
+  assert.equal(publicQuote.status, 200);
+  assert.equal(publicQuote.headers.get("cache-control"), "no-store");
+  assert.deepEqual(publicQuote.body, {
+    quote: { text: "What is shared should remain intentionally small.", author: "Privacy Tester" },
+  });
+  const authenticatedPublicQuote = await api(`/api/shares/${shareToken}`, { auth: readerToken });
+  assert.deepEqual(authenticatedPublicQuote.body, publicQuote.body);
+
+  const malformed = await api("/api/shares/not-a-token");
+  const missing = await api(`/api/shares/${"A".repeat(32)}.${"B".repeat(43)}`);
+  const replacement = shareToken.endsWith("A") ? "B" : "A";
+  const tampered = await api(`/api/shares/${shareToken.slice(0, -1)}${replacement}`);
+  assert.equal(malformed.status, 404);
+  assert.equal(missing.status, 404);
+  assert.equal(tampered.status, 404);
+  assert.deepEqual(malformed.body, missing.body);
+  assert.equal((await api(`/api/shares/${"A".repeat(32)}.${"B".repeat(43)}/import`, {
+    method: "POST", auth: readerToken, body: { categoryIds: [readerCategoryId] },
+  })).status, 404);
+  assert.deepEqual(tampered.body, missing.body);
+
+  const unauthenticatedImport = await api(`/api/shares/${shareToken}/import`, {
+    method: "POST", body: { categoryIds: [readerCategoryId] },
+  });
+  assert.equal(unauthenticatedImport.status, 401);
+
+  const foreignCategory = await api(`/api/shares/${shareToken}/import`, {
+    method: "POST", auth: readerToken, body: { categoryIds: [ownerOriginalId] },
+  });
+  assert.equal(foreignCategory.status, 400);
+
+  const imported = await api(`/api/shares/${shareToken}/import`, {
+    method: "POST", auth: readerToken, body: { categoryIds: [readerCategoryId] },
+  });
+  assert.equal(imported.status, 201);
+  assert.equal(imported.body.created, true);
+  assert.equal(imported.body.quote.text, source.body.quote.text);
+  assert.equal(imported.body.quote.author, source.body.quote.author);
+  assert.equal(imported.body.quote.source, null);
+  assert.equal(imported.body.quote.context, null);
+  assert.equal(imported.body.quote.date, null);
+  assert.deepEqual(imported.body.quote.categoryIds, [readerCategoryId]);
+
+  const repeatedImport = await api(`/api/shares/${shareToken}/import`, {
+    method: "POST", auth: readerToken, body: { categoryIds: [readerLaterId] },
+  });
+  assert.equal(repeatedImport.status, 200);
+  assert.equal(repeatedImport.body.created, false);
+  assert.equal(repeatedImport.body.quote.id, imported.body.quote.id);
+  assert.deepEqual(new Set(repeatedImport.body.quote.categoryIds), new Set([readerCategoryId, readerLaterId]));
+  assert.equal(db.prepare(`
+    SELECT COUNT(*) AS count FROM quote_share_imports WHERE share_quote_id = ? AND user_id = ?
+  `).get(source.body.quote.id, readerSignup.body.user.id).count, 1);
+
+  const ownerImport = await api(`/api/shares/${shareToken}/import`, {
+    method: "POST", auth: ownerToken, body: { categoryIds: [ownerImportedId] },
+  });
+  const repeatedOwnerImport = await api(`/api/shares/${shareToken}/import`, {
+    method: "POST", auth: ownerToken, body: { categoryIds: [ownerImportedId] },
+  });
+  assert.equal(ownerImport.status, 200);
+  assert.equal(ownerImport.body.created, false);
+  assert.equal(ownerImport.body.quote.id, source.body.quote.id);
+  assert.equal(repeatedOwnerImport.body.quote.categoryIds.filter((id) => id === ownerImportedId).length, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM quotes WHERE id = ?").get(source.body.quote.id).count, 1);
+
+  assert.equal((await api(`/api/quotes/${source.body.quote.id}`, { method: "DELETE", auth: ownerToken })).status, 204);
+  assert.equal((await api(`/api/shares/${shareToken}`)).status, 404);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM quote_shares WHERE selector = ?").get(storedShare.selector).count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM quote_share_imports WHERE share_quote_id = ?").get(source.body.quote.id).count, 0);
+  assert.equal((await api(`/api/quotes/${imported.body.quote.id}`, { auth: readerToken })).status, 200);
 });

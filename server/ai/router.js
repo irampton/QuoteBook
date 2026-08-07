@@ -35,29 +35,48 @@ function createAiRouter({ service, logger = console } = {}) {
   const router = express.Router();
 
   router.post('/parse', async (req, res) => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const close = () => { if (!res.writableEnded) abort(); };
+    req.once('aborted', abort);
+    res.once('close', close);
     try {
       const input = parseRequestSchema.parse(req.body);
       const quote = await service.parseQuote(input.text, {
         searchOnline: input.searchOnline,
         availableCategories: input.availableCategories,
+        signal: controller.signal,
       });
       res.json({ quote });
     } catch (error) {
+      if (controller.signal.aborted && (req.aborted || res.destroyed)) return;
       if (!(error instanceof AiError) && !(error instanceof ZodError)) logger?.error?.('AI parse request failed.', error);
       const response = publicError(error);
       res.status(response.status).json(response.body);
+    } finally {
+      req.removeListener('aborted', abort);
+      res.removeListener('close', close);
     }
   });
 
   router.post('/split', async (req, res) => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const close = () => { if (!res.writableEnded) abort(); };
+    req.once('aborted', abort);
+    res.once('close', close);
     try {
       const input = splitRequestSchema.parse(req.body);
-      const quotes = await service.splitQuotes(input.text);
+      const quotes = await service.splitQuotes(input.text, { signal: controller.signal });
       res.json({ quotes });
     } catch (error) {
+      if (controller.signal.aborted && (req.aborted || res.destroyed)) return;
       if (!(error instanceof AiError) && !(error instanceof ZodError)) logger?.error?.('AI split request failed.', error);
       const response = publicError(error);
       res.status(response.status).json(response.body);
+    } finally {
+      req.removeListener('aborted', abort);
+      res.removeListener('close', close);
     }
   });
 

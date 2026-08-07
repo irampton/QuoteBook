@@ -61,6 +61,22 @@ export function createDatabase(filename = process.env.DATABASE_PATH || path.join
       PRIMARY KEY (quote_id, category_id)
     ) STRICT, WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS quote_categories_category_idx ON quote_categories(category_id);
+
+    CREATE TABLE IF NOT EXISTS quote_shares (
+      quote_id INTEGER PRIMARY KEY REFERENCES quotes(id) ON DELETE CASCADE,
+      selector TEXT NOT NULL UNIQUE,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) STRICT;
+
+    CREATE TABLE IF NOT EXISTS quote_share_imports (
+      share_quote_id INTEGER NOT NULL REFERENCES quote_shares(quote_id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      imported_quote_id INTEGER NOT NULL UNIQUE REFERENCES quotes(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (share_quote_id, user_id)
+    ) STRICT, WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS quote_share_imports_user_idx ON quote_share_imports(user_id);
   `);
 
   return db;

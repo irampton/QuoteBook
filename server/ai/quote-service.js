@@ -4,6 +4,7 @@ const { ZodError } = require('zod');
 const { AiError } = require('./errors');
 const { parseJsonObject } = require('./json');
 const { PARSE_SYSTEM, SPLIT_SYSTEM, buildParsePrompt, buildSplitPrompt } = require('./prompts');
+const { mergeEvidence } = require('./research-harness');
 const { normalizeQuote, splitSchema } = require('./schemas');
 
 function invalidStructuredData(error) {
@@ -19,9 +20,10 @@ function invalidStructuredData(error) {
 }
 
 class QuoteAiService {
-  constructor({ completionClient, searchHarness, logger = console }) {
+  constructor({ completionClient, queryRepairer, searchHarness, logger = console }) {
     if (!completionClient) throw new TypeError('QuoteAiService requires a completion client.');
     this.completionClient = completionClient;
+    this.queryRepairer = queryRepairer;
     this.searchHarness = searchHarness;
     this.logger = logger;
   }
@@ -30,8 +32,36 @@ class QuoteAiService {
     let searchResults = [];
     let searchWarning = null;
     if (searchOnline && this.searchHarness) {
+      const queries = [text];
+      const settleSearch = (query) => this.searchHarness.search(query, { signal }).then(
+        (value) => ({ status: 'fulfilled', value }),
+        (reason) => ({ status: 'rejected', reason }),
+      );
+      // Start the original lookup immediately so query repair does not add to its latency.
+      const originalSearch = settleSearch(text);
+      if (this.queryRepairer) {
+        try {
+          const repair = await this.queryRepairer.repair(text, { signal });
+          if (repair.correctedQuery) queries.push(repair.correctedQuery);
+          else if (repair.distinctiveFragment) queries.push(repair.distinctiveFragment);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          this.logger?.warn?.('Quote lookup query repair failed; using the original query.', { code: error.code });
+        }
+      }
       try {
-        searchResults = await this.searchHarness.search(text, { signal });
+        const uniqueQueries = [...new Set(queries.map((query) => query.trim()).filter(Boolean))].slice(0, 2);
+        const settled = await Promise.all([
+          originalSearch,
+          ...uniqueQueries.slice(1).map(settleSearch),
+        ]);
+        if (signal?.aborted) {
+          const rejected = settled.find((result) => result.status === 'rejected');
+          throw rejected?.reason || new AiError('REQUEST_ABORTED', 'Quote processing was cancelled.', { status: 499 });
+        }
+        const fulfilled = settled.filter((result) => result.status === 'fulfilled').map((result) => result.value);
+        if (!fulfilled.length) throw settled.find((result) => result.status === 'rejected').reason;
+        searchResults = mergeEvidence(fulfilled, 8);
         if (!searchResults.length) searchWarning = 'No online search results were found.';
       } catch (error) {
         if (signal?.aborted) throw error;

@@ -112,6 +112,8 @@ const showInput = computed(() => mode.value === 'single'
 const activeError = computed(() => mode.value === 'single' ? singleError.value : batchError.value)
 const batchCounts = computed(() => batchItems.value.reduce((counts, item) => { counts[item.status] = (counts[item.status] || 0) + 1; return counts }, { waiting: 0, processing: 0, ready: 0, error: 0, saved: 0, discarded: 0 }))
 const batchSummary = computed(() => `${batchCounts.value.saved} saved · ${batchCounts.value.ready} awaiting review · ${batchCounts.value.error} failed · ${batchCounts.value.discarded} discarded`)
+const batchTerminal = computed(() => batchItems.value.length > 0 && batchItems.value.every(item => item.status === 'saved' || item.status === 'discarded'))
+const batchUnfinished = computed(() => batchItems.value.length > 0 && !batchTerminal.value)
 
 function normalize(result, fallback) {
   const quote = result?.quote || result?.data || result || {}
@@ -182,4 +184,24 @@ function discardBatchItem(id) { const item = batchItems.value.find(value => valu
 function statusLabel(status) { return ({ waiting: 'Waiting', processing: 'Researching quote…', saved: 'Saved', discarded: 'Discarded', error: 'Could not process' })[status] || status }
 function resetSingle() { input.value = ''; singleReview.value = null; singleComplete.value = false; singleError.value = '' }
 function resetBatch() { input.value = ''; batchItems.value = []; batchError.value = '' }
+
+function resetWorkspace() {
+  mode.value = 'single'; input.value = ''; searchOnline.value = true
+  singleProcessing.value = false; singleReview.value = null; singleComplete.value = false; singleError.value = ''
+  splitting.value = false; batchRunning.value = false; batchItems.value = []; batchError.value = ''; nextBatchId = 1
+}
+
+function resetIfComplete() {
+  if (mode.value === 'single' && singleComplete.value) {
+    if (batchUnfinished.value) { mode.value = 'batch'; return false }
+    resetWorkspace(); return true
+  }
+  if (mode.value === 'batch' && batchTerminal.value) {
+    if (singleProcessing.value || singleReview.value || singleError.value) { mode.value = 'single'; return false }
+    resetWorkspace(); return true
+  }
+  return false
+}
+
+defineExpose({ resetIfComplete })
 </script>

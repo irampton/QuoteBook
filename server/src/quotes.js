@@ -4,6 +4,20 @@ import { transaction } from "./db.js";
 import { nonNegativeInteger, positiveInteger } from "./validation.js";
 
 const MAX_TEXT_LENGTH = 10_000;
+const WRAPPING_MARKS = [["\"", "\""], ["'", "'"], ["\u201c", "\u201d"], ["\u2018", "\u2019"], ["\u00ab", "\u00bb"]];
+
+function stripWrappingMarks(value) {
+  const text = value.trim();
+  for (const [left, right] of WRAPPING_MARKS) {
+    if (!text.startsWith(left)) continue;
+    if (text.endsWith(right)) return text.slice(left.length, -right.length).trim();
+    const terminal = text.at(-1);
+    if (/[.!?;:\u2026]/u.test(terminal) && text.slice(0, -1).endsWith(right)) {
+      return `${text.slice(left.length, -(right.length + 1)).trim()}${terminal}`;
+    }
+  }
+  return text;
+}
 
 function optionalText(value, field, maximum = 2_000) {
   if (value === undefined || value === null || value === "") return null;
@@ -17,7 +31,7 @@ function normalizeQuote(body, partial = false) {
   const quote = {};
   if (!partial || body?.text !== undefined) {
     assert(typeof body?.text === "string", 400, "invalid_quote", "Quote text is required.");
-    quote.text = body.text.trim().replace(/^[“\"]|[”\"]$/g, "").trim();
+    quote.text = stripWrappingMarks(body.text);
     assert(quote.text.length >= 1 && quote.text.length <= MAX_TEXT_LENGTH, 400, "invalid_quote", "Quote text must be between 1 and 10,000 characters.");
   }
   for (const [jsonName, column, maximum] of [

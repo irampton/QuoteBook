@@ -1,5 +1,6 @@
 <template>
   <div v-if="booting" class="grid min-h-screen place-items-center bg-cream"><div class="text-center"><BrandMark caption/><div class="mt-8 text-sage"><LoadingSpinner/></div></div></div>
+  <PublicQuotePage v-else-if="publicToken" :token="publicToken" :authenticated="!!user" :categories="categories"/>
   <AuthPage v-else-if="!user" :notice="sessionNotice" @authenticated="onAuthenticated"/>
   <CategorySetup v-else-if="needsSetup" @complete="onSetupComplete"/>
   <AppShell v-else :user="user" :initial-categories="categories" @logout="logout"/>
@@ -12,7 +13,10 @@ import AuthPage from './components/AuthPage.vue'
 import BrandMark from './components/BrandMark.vue'
 import CategorySetup from './components/CategorySetup.vue'
 import LoadingSpinner from './components/LoadingSpinner.vue'
+import PublicQuotePage from './components/PublicQuotePage.vue'
 import { api, auth } from './api'
+function publicTokenFromPath() { const match = window.location.pathname.match(/^\/q\/([^/]+)\/?$/); if (!match) return ''; try { return decodeURIComponent(match[1]) } catch { return match[1] } }
+const publicToken = publicTokenFromPath()
 const booting = ref(true), user = ref(null), needsSetup = ref(false), categories = ref([]), sessionNotice = ref('')
 async function loadCategories() { const result = await api.categories(); categories.value = result?.categories || result?.items || (Array.isArray(result) ? result : []) }
 async function onAuthenticated(result) { sessionNotice.value = ''; user.value = result.user; needsSetup.value = result.needsSetup; if (!needsSetup.value) { try { await loadCategories() } catch {} } }

@@ -1,0 +1,19 @@
+services:
+  quotebook:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: 3000
+      DATABASE_PATH: /data/quotebook.db
+      SHARE_SECRET_FILE: /data/.share-secret
+    ports:
+      - "3000:3000"
+    volumes:
+      - quotebook-data:/data
+
+volumes:
+  quotebook-data:

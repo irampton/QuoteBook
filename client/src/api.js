@@ -45,4 +45,9 @@ export const api = {
   analyzeQuote: (text, searchOnline, availableCategories = []) => request('/ai/parse', { method: 'POST', body: JSON.stringify({ text, searchOnline, availableCategories }) }),
   splitQuotes: (text) => request('/ai/split', { method: 'POST', body: JSON.stringify({ text }) }),
   saveQuote: (quote) => request('/quotes', { method: 'POST', body: JSON.stringify(quote) }),
+  updateQuote: (id, quote) => request(`/quotes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(quote) }),
+  deleteQuote: (id) => request(`/quotes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  shareQuote: (id) => request(`/quotes/${encodeURIComponent(id)}/share`, { method: 'POST' }),
+  publicQuote: (token, signal) => request(`/shares/${encodeURIComponent(token)}`, { signal }),
+  savePublicQuote: (token, categoryIds) => request(`/shares/${encodeURIComponent(token)}/import`, { method: 'POST', body: JSON.stringify({ categoryIds }) }),
 }

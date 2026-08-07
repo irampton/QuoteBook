@@ -3,6 +3,7 @@
 const { CompletionClient } = require('./completion-client');
 const { loadAiConfig } = require('./config');
 const { QuoteAiService } = require('./quote-service');
+const { QueryRepairer } = require('./query-repair');
 const { QuoteResearchHarness } = require('./research-harness');
 const { createAiRouter } = require('./router');
 const { InternetSearchHarness } = require('./search-harness');
@@ -31,7 +32,10 @@ function createAiService({ env = process.env, fetchImpl = globalThis.fetch, logg
     fetchImpl,
   }) : null;
   const searchHarness = new QuoteResearchHarness({ wikiquoteHarness, webSearchHarness, logger });
-  return new QuoteAiService({ completionClient, searchHarness, logger });
+  const queryRepairer = config.queryRepairEnabled
+    ? new QueryRepairer({ completionClient, timeoutMs: config.queryRepairTimeoutMs })
+    : null;
+  return new QuoteAiService({ completionClient, queryRepairer, searchHarness, logger });
 }
 
 function createConfiguredAiRouter(options = {}) {
@@ -44,6 +48,7 @@ module.exports = {
   InternetSearchHarness,
   QuoteResearchHarness,
   QuoteAiService,
+  QueryRepairer,
   WikiquoteSearchHarness,
   createAiRouter: createConfiguredAiRouter,
   createAiService,

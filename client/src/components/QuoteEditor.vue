@@ -1,7 +1,7 @@
 <template>
   <article class="rounded-2xl border border-line bg-paper p-5 card-shadow sm:p-6">
     <div class="mb-5 flex items-start justify-between gap-4">
-      <div><p class="text-xs font-bold tracking-[.12em] text-sage uppercase">Ready to review</p><h3 class="mt-1 font-serif text-xl font-semibold">Check the details</h3></div>
+      <div><p class="text-xs font-bold tracking-[.12em] text-sage uppercase">{{ eyebrow }}</p><h3 class="mt-1 font-serif text-xl font-semibold">{{ title }}</h3></div>
       <span v-if="model.confidence != null" class="rounded-full bg-cream px-3 py-1 text-xs text-ink/50">{{ confidenceLabel }} confidence</span>
     </div>
     <div class="space-y-5">
@@ -22,7 +22,7 @@
       </div>
     </div>
     <p v-if="error" class="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">{{ error }}</p>
-    <div class="mt-6 flex justify-end gap-3"><button class="btn-secondary" @click="$emit('cancel')">Discard</button><button class="btn-primary min-w-28" :disabled="saving || !model.text.trim()" @click="save"><LoadingSpinner v-if="saving" small/><Save v-else :size="16"/> {{ saving ? 'Saving…' : 'Save quote' }}</button></div>
+    <div class="mt-6 flex justify-end gap-3"><button class="btn-secondary" :disabled="saving" @click="$emit('cancel')">{{ cancelLabel }}</button><button class="btn-primary min-w-28" :disabled="saving || !model.text.trim()" @click="save"><LoadingSpinner v-if="saving" small/><Save v-else :size="16"/> {{ saving ? 'Saving…' : saveLabel }}</button></div>
   </article>
 </template>
 
@@ -31,7 +31,15 @@ import { computed, reactive, ref, useId, watch } from 'vue'
 import { Check, Save } from 'lucide-vue-next'
 import LoadingSpinner from './LoadingSpinner.vue'
 import { api } from '../api'
-const props = defineProps({ quote: { type: Object, required: true }, categories: { type: Array, default: () => [] } })
+const props = defineProps({
+  quote: { type: Object, required: true },
+  categories: { type: Array, default: () => [] },
+  saveHandler: { type: Function, default: null },
+  eyebrow: { type: String, default: 'Ready to review' },
+  title: { type: String, default: 'Check the details' },
+  saveLabel: { type: String, default: 'Save quote' },
+  cancelLabel: { type: String, default: 'Discard' },
+})
 const emit = defineEmits(['saved', 'cancel'])
 const model = reactive({}); const saving = ref(false); const error = ref('')
 const fieldId = useId()
@@ -40,5 +48,5 @@ const confidenceLabel = computed(() => typeof model.confidence === 'number' ? `$
 function key(category) { return category.id ?? category.name }
 function isSelected(category) { return (model.categoryIds || model.categories || []).some(x => String(typeof x === 'object' ? key(x) : x) === String(key(category)) || String(x) === String(category.name)) }
 function toggle(category) { const current = [...(model.categoryIds || [])]; const index = current.findIndex(x => String(x) === String(key(category))); if (index >= 0) current.splice(index, 1); else current.push(key(category)); model.categoryIds = current }
-async function save() { saving.value = true; error.value = ''; try { const result = await api.saveQuote(model); emit('saved', result?.quote || result || { ...model }) } catch (e) { error.value = e.message } finally { saving.value = false } }
+async function save() { saving.value = true; error.value = ''; try { const payload = { ...model }; const result = props.saveHandler ? await props.saveHandler(payload) : await api.saveQuote(payload); emit('saved', result?.quote || result || payload) } catch (e) { error.value = e.message } finally { saving.value = false } }
 </script>

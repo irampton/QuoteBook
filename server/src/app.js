@@ -8,13 +8,15 @@ import { createCategoriesRouter } from "./categories.js";
 import { createQuotesRouter } from "./quotes.js";
 import { errorHandler, HttpError } from "./errors.js";
 import { createRateLimiter } from "./rate-limit.js";
+import { loadShareSecret, normalizeShareSecret } from "./share-secret.js";
+import { createOwnedSharesRouter, createPublicSharesRouter, createShareImportsRouter } from "./shares.js";
 
 const require = createRequire(import.meta.url);
 const { createAiRouter } = require("../ai/index.js");
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(moduleDirectory, "..", "..", "client", "dist");
 
-export function createApp(db, { aiService, rateLimits = {} } = {}) {
+export function createApp(db, { aiService, rateLimits = {}, shareSecret } = {}) {
   const app = express();
   app.disable("x-powered-by");
   if (process.env.TRUST_PROXY) app.set("trust proxy", process.env.TRUST_PROXY === "true" ? 1 : process.env.TRUST_PROXY);
@@ -43,9 +45,15 @@ export function createApp(db, { aiService, rateLimits = {} } = {}) {
   const requireAuth = createRequireAuth(db);
   const authRateLimit = createRateLimiter({ max: rateLimits.authMax ?? 60, windowMs: rateLimits.authWindowMs ?? 15 * 60_000 });
   const aiRateLimit = createRateLimiter({ max: rateLimits.aiMax ?? 30, windowMs: rateLimits.aiWindowMs ?? 60_000 });
+  const publicShareRateLimit = createRateLimiter({ max: rateLimits.shareMax ?? 120, windowMs: rateLimits.shareWindowMs ?? 60_000 });
+  let resolvedShareSecret;
+  const getShareSecret = () => (resolvedShareSecret ||= shareSecret ? normalizeShareSecret(shareSecret) : loadShareSecret());
   app.get("/api/health", (_request, response) => response.json({ status: "ok" }));
   app.use("/api/auth", createAuthRouter(db, requireAuth, authRateLimit));
   app.use("/api/categories", requireAuth, createCategoriesRouter(db));
+  app.use("/api/shares", publicShareRateLimit, createPublicSharesRouter(db, getShareSecret));
+  app.use("/api/shares", requireAuth, createShareImportsRouter(db, getShareSecret));
+  app.use("/api/quotes", requireAuth, createOwnedSharesRouter(db, getShareSecret));
   app.use("/api/quotes", requireAuth, createQuotesRouter(db));
   app.use("/api/ai", requireAuth, aiRateLimit, createAiRouter(aiService ? { service: aiService } : {}));
   app.use("/api", (_request, _response, next) => next(new HttpError(404, "not_found", "Route not found.")));
@@ -59,7 +67,9 @@ export function createApp(db, { aiService, rateLimits = {} } = {}) {
       },
     }));
     app.use((request, response, next) => {
-      if (request.method === "GET" && !path.extname(request.path) && request.accepts("html")) {
+      const isSharePage = /^\/q\/[^/]+$/.test(request.path);
+      const isClientRoute = !path.extname(request.path) && !request.path.startsWith("/assets/");
+      if (request.method === "GET" && (isSharePage || isClientRoute) && request.accepts("html")) {
         response.set("Cache-Control", "no-cache");
         return response.sendFile(path.join(clientDist, "index.html"));
       }
