@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Lora", Georgia, serif;
+  --color-ink: #202723;
+  --color-cream: #f7f5ef;
+  --color-paper: #fffefa;
+  --color-sage: #557263;
+  --color-sage-dark: #365145;
+  --color-moss: #8da092;
+  --color-line: #dedfd8;
+  --color-ochre: #c98446;
+}
+
+@font-face {
+  font-family: "DM Sans";
+  src: local("DM Sans");
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #f7f5ef; color: #202723; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; }
+::selection { background: #cad8ce; }
+
+.card-shadow { box-shadow: 0 10px 35px rgba(42, 56, 48, .07); }
+.focus-ring { @apply outline-none focus:border-sage focus:ring-3 focus:ring-sage/10; }
+.field { @apply w-full rounded-xl border border-line bg-paper px-4 py-3 text-sm outline-none transition focus:border-sage focus:ring-3 focus:ring-sage/10; }
+.label { @apply mb-2 block text-xs font-semibold tracking-wide text-ink/65 uppercase; }
+.btn-primary { @apply inline-flex items-center justify-center gap-2 rounded-xl bg-sage px-5 py-3 text-sm font-semibold text-white transition hover:bg-sage-dark disabled:cursor-not-allowed disabled:opacity-55; }
+.btn-secondary { @apply inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-paper px-4 py-2.5 text-sm font-semibold transition hover:border-moss hover:bg-white; }
+
+.fade-enter-active, .fade-leave-active { transition: opacity .18s ease, transform .18s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(4px); }
+
+@keyframes gentle-spin { to { transform: rotate(360deg); } }
+.gentle-spin { animation: gentle-spin .9s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
